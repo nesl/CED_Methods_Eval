@@ -1,9 +1,9 @@
 #!/bin/bash
 
-model=ae_transformer
+model=tcn
 
 for dataset in 10000 8000 6000 4000; do
-    for seed in 0 17 1243 3674 7341; do
+    for seed in 53 97 103 191 99719; do
         echo $model
         echo $dataset
         echo $seed

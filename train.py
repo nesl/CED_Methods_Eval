@@ -11,7 +11,7 @@ from models import RNN, TCN, TimeSeriesTransformer
 parser = argparse.ArgumentParser(description='NN Model Evaluation')
 parser.add_argument('model', type=str, choices=['lstm', 'tcn', 'transformer', 'ae_lstm', 'ae_tcn', 'ae_transformer'])
 parser.add_argument('dataset', type=int, help='Dataset size', choices=[2000, 4000, 6000, 8000, 10000])
-parser.add_argument('seed',  type=int, help='Random seed', choices=[0, 17, 1243, 3674, 7341])
+parser.add_argument('seed',  type=int, help='Random seed', choices=[0, 17, 1243, 3674, 7341, 53, 97, 103, 191, 99719])
 
 args = parser.parse_args()
 
