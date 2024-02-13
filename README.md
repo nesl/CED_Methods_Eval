@@ -10,7 +10,7 @@ To download the datasets used in this project:
 **Synthetic complex event dataset:**
 * The complex event dataset is synthesized using the atomic activity datasets above: https://drive.google.com/drive/folders/1tATqHHPHJO9_f0fI-n4gBZtRVd1QPbX4?usp=drive_link.
 * Definition of the complex events:
-![Complex Event Definitions](imgs/complex_event_definition.png)
+![Complex Event Definitions](https://raw.githubusercontent.com/nesl/CED_Methods_Eval/main/imgs/complex_event_definition.png)
 * Description of the dataset:
   
   Consider a ($data$, $label$) sample pair from the dataset:
