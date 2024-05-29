@@ -1,0 +1,6 @@
+CE_dataset/
+IMU/
+Audio/
+Multimodal/*.npz
+*.pyc
+__pycache__/

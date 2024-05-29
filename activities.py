@@ -12,17 +12,25 @@ def load_dataset(data_path, config_file):
 
 
 class Activity():
-    def __init__(self, name, fsm_list=None, simple_label=True):
+    def __init__(self, name, data_cat, fsm_list=None, simple_label=True):
         """
         Args:
-            name (string): the name of this activity
-            prob (float): the probability of this activity
+            name (string): the name of this activity.
+            data_cat (string): 'train' or 'test' dataset category.
+            fsm_list (list): a list of FSM class instances.
+            simple_label (bool): generate a single CE label if true, otherwise generate a list of CE labels corresponding to each timestamp.
         """
         self.name = name
         self.fsm_list = fsm_list
         self.simple_label = simple_label
 
-        self.data_path = './Multimodal/fusion_5_audio1234_imu1234_embeddings.npz'
+        if data_cat == 'train': 
+            self.data_path = './Multimodal/fusion_5_audio1234_imu1234_embeddings.npz'
+        elif data_cat == 'test':
+            self.data_path = './Multimodal/fusion_5_audio5_imu5_embeddings.npz'
+        else:
+            raise Exception("Unexpected dataset category - should choose from 'train' or 'test'.") 
+
         self.config_file = './Multimodal/dataset_config.json'
 
         dataset, data_config = load_dataset(self.data_path, self.config_file)
@@ -31,7 +39,9 @@ class Activity():
         self.data, self.class_index_list = self.get_data(dataset)
 
         if self.fsm_list is not None:
-            self.label_sequence = []
+            self.event_label_sequence = []
+            self.state_input_sequence = []
+            self.state_output_sequence = []
         self.action_sequence = []
         self.data_sequence = []
         self.action_label_sequence = []
@@ -70,18 +80,56 @@ class Activity():
         """
         raise NotImplementedError
     
-    def generate_label(self):
+    def generate_complex_label(self):
+        """
+        Return the current states, next states, and complex event label(s) sequences
+        """
         assert self.fsm_list is not None
         if self.simple_label is True:
-            return [max(self.label_sequence)]
-        return self.label_sequence
+            return [max(self.event_label_sequence)]
+        return self.event_label_sequence, self.state_input_sequence, self.state_output_sequence
+    
+    def _truncate_events(self, enforce_window_length):
+        """
+        Truncate all sequences to a fix length (enforce_window_length)
+        """
+        self.action_sequence = self.action_sequence[:enforce_window_length]
+        self.data_sequence = self.data_sequence[:enforce_window_length]
+        self.action_label_sequence = self.action_label_sequence[:enforce_window_length]
+        if self.fsm_list is not None:
+            self.event_label_sequence = self.event_label_sequence[:enforce_window_length]
+            self.state_input_sequence = self.state_input_sequence[:enforce_window_length]
+            self.state_output_sequence = self.state_output_sequence[:enforce_window_length]
 
-    def _add_actions(self, action):
+
+    def _add_complex_label(self, action):
         """
-        Add actions for a random number of windows and update time window elapsed
+        Generate the current state, next state, and the complex event label given the input action
         """
-        action_t_min, action_t_max = self.action_length[action]
-        action_t = np.random.randint(action_t_min, action_t_max + 1)
+        assert self.fsm_list is not None
+        ce_label = 0
+        curr_states = []
+        next_states = []
+        for fsm in self.fsm_list:
+            curr_states.append(fsm.get_current_state())
+            l = fsm.update_state(input=action)
+            next_states.append(fsm.get_current_state())
+            if l > 0: ce_label = l
+        self.event_label_sequence.append(ce_label)
+        self.state_input_sequence.append(curr_states)
+        self.state_output_sequence.append(next_states)
+
+    def _add_actions(self, action, window_length=None):
+        """
+        Add actions for a random or fixed number of windows and update time window elapsed
+        """
+        if window_length is not None:
+            action_t = window_length
+        else:
+            # otherwise use a random time window
+            action_t_min, action_t_max = self.action_length[action]
+            action_t = np.random.randint(action_t_min, action_t_max + 1)
+            
         action_id = self.label_mapping[action]
 
         for _ in range(action_t):
@@ -91,13 +139,9 @@ class Activity():
             self.data_sequence.append(action_data)
             self.action_label_sequence.append(action_id)
 
-            # Generate complex event label if FSMs are given
+            # Generate complex event label and states if FSMs are given
             if self.fsm_list is not None:
-                ce_label = 0
-                for fsm in self.fsm_list:
-                    l = fsm.update_state(input=action)
-                    if l > 0: ce_label = l
-                self.label_sequence.append(ce_label)
+                self._add_complex_label(action=action)
 
         self.time_window_elapsed += action_t
 
@@ -115,8 +159,15 @@ class Activity():
 
 
 class RestroomActivity(Activity):
-    def __init__(self, enforce_window_length=None, fsm_list=None, simple_label=True):
-        super().__init__(name='restroom', fsm_list=fsm_list, simple_label=simple_label)
+    def __init__(self, data_cat, enforce_window_length=None, fsm_list=None, simple_label=True):
+        """
+        Args:
+            data_cat (string): 'train' or 'test' dataset category.
+            enforce_window_length (int): the fixed length of activity to generate.
+            fsm_list (list): a list of FSM class instances.
+            simple_label (bool): generate a single CE label if true, otherwise generate a list of CE labels corresponding to each timestamp.
+        """
+        super().__init__(name='restroom', data_cat=data_cat, fsm_list=fsm_list, simple_label=simple_label)
         self.enforce_window_length = enforce_window_length
 
     def _define_actions(self):
@@ -160,27 +211,11 @@ class RestroomActivity(Activity):
         if self.enforce_window_length is not None:
             # Truncate the sequence
             if self.time_window_elapsed > self.enforce_window_length:
-                self.action_sequence = self.action_sequence[:self.enforce_window_length]
-                self.data_sequence = self.data_sequence[:self.enforce_window_length]
-                self.action_label_sequence = self.action_label_sequence[:self.enforce_window_length]
-                if self.fsm_list is not None:
-                    self.label_sequence = self.label_sequence[:self.enforce_window_length]
+                self._truncate_events(self.enforce_window_length)
             # Extend the sequence with the last action
             elif self.time_window_elapsed < self.enforce_window_length:
                 add_window_length = self.enforce_window_length - self.time_window_elapsed
-                for _ in range(add_window_length):
-                    self.action_sequence.append('walk')
-                    action_id = self.label_mapping['walk']
-                    action_data = self.data[np.random.choice(self.class_index_list[action_id])]
-                    self.data_sequence.append(action_data)
-                    self.action_label_sequence.append(action_id)
-                    # Generate complex event label if FSMs are given
-                    if self.fsm_list is not None:
-                        ce_label = 0
-                        for fsm in self.fsm_list:
-                            l = fsm.update_state(input='walk')
-                            if l > 0: ce_label = l
-                    self.label_sequence.append(ce_label)
+                self._add_actions('walk', window_length=add_window_length)
 
             self.time_window_elapsed = len(self.action_sequence)
 
@@ -188,8 +223,8 @@ class RestroomActivity(Activity):
     
 
 class WalkingActivity(Activity):
-    def __init__(self):
-        super().__init__(name='walk_only')
+    def __init__(self, data_cat):
+        super().__init__(name='walk_only', data_cat=data_cat)
 
     def _define_actions(self):
         """
@@ -209,8 +244,8 @@ class WalkingActivity(Activity):
     
 
 class SittingActivity(Activity):
-    def __init__(self):
-        super().__init__(name='sit_only')
+    def __init__(self, data_cat):
+        super().__init__(name='sit_only', data_cat=data_cat)
 
     def _define_actions(self):
         """
@@ -229,9 +264,9 @@ class SittingActivity(Activity):
     
 
 class WorkingActivity(Activity):
-    def __init__(self):
+    def __init__(self, data_cat):
         self.action_probs = {}
-        super().__init__(name='work')
+        super().__init__(name='work', data_cat=data_cat)
 
     def _define_actions(self):
         """
@@ -283,8 +318,8 @@ class WorkingActivity(Activity):
     
 
 class DrinkingActivity(Activity):
-    def __init__(self):
-        super().__init__(name='drink_only')
+    def __init__(self, data_cat):
+        super().__init__(name='drink_only', data_cat=data_cat)
 
     def _define_actions(self):
         """
@@ -303,11 +338,16 @@ class DrinkingActivity(Activity):
     
 
 class OralCleaningActivity(Activity):
-    def __init__(self, enforce_window_length=None, action_length={}, fsm_list=None, simple_label=True):
+    def __init__(self, data_cat, enforce_window_length=None, action_length={}, fsm_list=None, simple_label=True):
         """
-        action_length (tuple, dict): key - activity name, value - (min_time, max_time)
+        Args:
+            data_cat (string): 'train' or 'test' dataset category.
+            enforce_window_length (int): the fixed length of activity to generate.
+            action_length (tuple, dict): key - activity name, value - (min_time, max_time)
+            fsm_list (list): a list of FSM class instances.
+            simple_label (bool): generate a single CE label if true, otherwise generate a list of CE labels corresponding to each timestamp.
         """
-        super().__init__(name='oral_clean', fsm_list=fsm_list, simple_label=simple_label)
+        super().__init__(name='oral_clean', data_cat=data_cat, fsm_list=fsm_list, simple_label=simple_label)
         self.enforce_window_length = enforce_window_length
         if action_length: # if action_length is not empty
             self.action_length = action_length
@@ -347,27 +387,11 @@ class OralCleaningActivity(Activity):
         if self.enforce_window_length is not None:
             # Truncate the sequence
             if self.time_window_elapsed >= self.enforce_window_length:
-                self.action_sequence = self.action_sequence[:self.enforce_window_length]
-                self.data_sequence = self.data_sequence[:self.enforce_window_length]
-                self.action_label_sequence = self.action_label_sequence[:self.enforce_window_length]
-                if self.fsm_list is not None:
-                    self.label_sequence = self.label_sequence[:self.enforce_window_length]
+                self._truncate_events(self.enforce_window_length)
             # Extend the sequence with the last action
             else:
                 add_window_length = self.enforce_window_length - self.time_window_elapsed
-                for _ in range(add_window_length):
-                    self.action_sequence.append('walk')
-                    action_id = self.label_mapping['walk']
-                    action_data = self.data[np.random.choice(self.class_index_list[action_id])]
-                    self.data_sequence.append(action_data)
-                    self.action_label_sequence.append(action_id)
-                    # Generate complex event label if FSMs are given
-                    if self.fsm_list is not None:
-                        ce_label = 0
-                        for fsm in self.fsm_list:
-                            l = fsm.update_state(input='walk')
-                            if l > 0: ce_label = l
-                    self.label_sequence.append(ce_label)
+                self._add_actions('walk', window_length=add_window_length)
 
             self.time_window_elapsed = len(self.action_sequence)
 
@@ -375,8 +399,15 @@ class OralCleaningActivity(Activity):
 
 
 class HavingMealActivity(Activity):
-    def __init__(self, enforce_window_length=None, fsm_list=None, simple_label=True):
-        super().__init__(name='have_meal', fsm_list=fsm_list, simple_label=simple_label)
+    def __init__(self, data_cat, enforce_window_length=None, fsm_list=None, simple_label=True):
+        """
+        Args:
+            data_cat (string): 'train' or 'test' dataset category.
+            enforce_window_length (int): the fixed length of activity to generate.
+            fsm_list (list): a list of FSM class instances.
+            simple_label (bool): generate a single CE label if true, otherwise generate a list of CE labels corresponding to each timestamp.
+        """
+        super().__init__(name='have_meal', data_cat=data_cat, fsm_list=fsm_list, simple_label=simple_label)
         self.enforce_window_length = enforce_window_length
 
     def _define_actions(self):
@@ -425,11 +456,8 @@ class HavingMealActivity(Activity):
             self._add_actions('walk')
         else:
             # Truncate the sequence
-            self.action_sequence = self.action_sequence[:self.enforce_window_length]
-            self.data_sequence = self.data_sequence[:self.enforce_window_length]
-            self.action_label_sequence = self.action_label_sequence[:self.enforce_window_length]
-            if self.fsm_list is not None:
-                self.label_sequence = self.label_sequence[:self.enforce_window_length]
+            self._truncate_events(self.enforce_window_length)
+
             self.time_window_elapsed = len(self.action_sequence)
 
         return self.action_sequence, self.data_sequence, self.action_label_sequence, self.time_window_elapsed

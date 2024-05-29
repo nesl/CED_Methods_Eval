@@ -2,6 +2,7 @@ import math
 import torch
 from torch import nn
 from torch.nn.utils import weight_norm
+from torch.nn import functional as F
 
 class RNN(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layer):
@@ -97,8 +98,9 @@ class TCN(nn.Module):
 
 
 
-class TimeSeriesTransformer(nn.Module):
-    def __init__(self, input_dim, output_dim, num_head=8, num_layers=6, pos_encoding=False, dropout=0.0):
+class TSTransformer(nn.Module):
+    def __init__(self, input_dim: int, output_dim:int, num_head=8, num_layers=6, pos_encoding=False, dropout=0.0):
+        '''Time-Series Transformer'''
         super().__init__()
         self.pos_encoding = pos_encoding
         if self.pos_encoding:
@@ -136,3 +138,55 @@ class PositionalEncoder(torch.nn.Module):
             pe = self.pe[:, :seq_len]
             x = x + pe
             return x
+
+
+class StateEncoder(torch.nn.Module): # Temporary encoder
+    def __init__(self, n_state, out_dim=32):
+        super().__init__()  
+        self.n_state = n_state
+        self.out_dim = out_dim
+
+    def forward(self, x):
+        x = F.one_hot(x, num_classes=self.n_state)
+        x = x.repeat_interleave(4, dim=-1, output_size=self.out_dim)
+        x.to(torch.float32)
+
+        return x 
+
+
+class MultiTaskTSTransformer(nn.Module):
+    def __init__(self, in_dim_embed: int, out_dim_ce: int, out_dim_state: int, hidden_dim_state=32, num_head=8, num_layers=6, pos_encoding=False, dropout=0.0):
+        '''
+        Time-Series Tansformer with two task heads - one for CE label and one for state prediction
+        '''
+        super().__init__()
+
+        in_dim = in_dim_embed + hidden_dim_state
+
+        self.state_encoder = StateEncoder(n_state=out_dim_state)
+        self.pos_encoding = pos_encoding
+        if self.pos_encoding:
+            self.pos_encoder = PositionalEncoder(d_model=in_dim)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=in_dim, nhead=num_head, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)
+        self.fc_0 = nn.Linear(in_dim, out_dim_ce)
+        self.fc_1 = nn.Linear(in_dim, out_dim_state)
+
+    def forward(self, src, s_src, mask=None, src_key_padding_mask=None):
+        '''
+        Arguments:
+            src (float32, Tensor): Processed sensor embedding.
+            s_src (int64, Tensor): Current states of FSMs.
+            mask (bool, Tensor): Causal mask for the self-attention block.
+        '''
+        s_src = self.state_encoder(s_src)
+        src = torch.cat([src, s_src], dim=-1)
+        if self.pos_encoding:
+            x = self.pos_encoder(src)
+        x = self.transformer_encoder(src, mask=mask, src_key_padding_mask=src_key_padding_mask)  # src should have dimension (N, S, E)
+        x1 = self.fc_0(x)
+        x2 = self.fc_1(x)
+        o1 = torch.sigmoid(x1)
+        o2 = torch.sigmoid(x2)
+
+        return o1, o2

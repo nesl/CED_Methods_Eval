@@ -118,7 +118,9 @@ class ESC(Dataset, ABC):
             self.df = pd.read_csv(join(root, csv_file))
         self.dfs = self.df
         if type(self.df) is list:
-            self.df = self.df[0].append(self.df[1:])
+            self.df = self.df[0]._append(self.df[1:])
+            # self.df = pd.concat([self.df[0], self.df[1:]])
+
         self.classes = self._ordered_classes()
         self.nClasses = len(self.classes)
 

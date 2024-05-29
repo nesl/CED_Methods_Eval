@@ -11,7 +11,8 @@ from models import RNN, TCN, TimeSeriesTransformer
 parser = argparse.ArgumentParser(description='NN Model Evaluation')
 parser.add_argument('model', type=str, choices=['lstm', 'tcn', 'transformer', 'ae_lstm', 'ae_tcn', 'ae_transformer'])
 parser.add_argument('dataset', type=int, help='Dataset size', choices=[2000, 4000, 6000, 8000, 10000])
-parser.add_argument('seed',  type=int, help='Random seed', choices=[0, 17, 1243, 3674, 7341, 53, 97, 103, 191, 99719])
+parser.add_argument('seed',  type=int, help='Random seed') #0, 17, 1243, 3674, 7341, 53, 97, 103, 191, 99719
+parser.add_argument('-p', '--pylon', action='store_true', help='use PYLON constraint during training')
 
 args = parser.parse_args()
 
@@ -88,7 +89,8 @@ src_causal_mask = create_src_causal_mask(ce_train_data.shape[1]) if args.model =
 
 train(
     model=model,
-    data_loader=ce_train_loader,
+    train_loader=ce_train_loader,
+    val_loader=ce_test_loader, # need to generate validation data
     n_epochs=n_epochs,
     lr=learning_rate,
     criterion=criterion,
